@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Exam Timetable Maker — Automatic Conflict-Free Scheduling</title>
+  <link rel="stylesheet" href="style.css">
+  <!-- External Library: vis-network standalone build from unpkg CDN -->
+  <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+</head>
+<body class="simple-mode">
+
+  <!-- Print Header (only visible on print) -->
+  <div class="print-header">
+    <h1>Exam Timetable</h1>
+    <p>Generated automatically • Verified 100% conflict-free (no student has two exams at the same time)</p>
+  </div>
+
+  <!-- Header Section -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="app-icon">📅</div>
+      <div class="title-group">
+        <h1>Exam Timetable Maker</h1>
+        <p>Make an exam timetable where no student has two exams at the same time.</p>
+      </div>
+    </div>
+    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+      <button class="btn btn-sm" id="btn-toggle-faq" title="Frequently Asked Questions" aria-label="Help and FAQ">
+        ❓ Help & FAQ
+      </button>
+      <div class="mode-toggle-group" role="radiogroup" aria-label="View Mode">
+        <button class="mode-btn active" id="btn-mode-simple" role="radio" aria-checked="true">Simple view</button>
+        <button class="mode-btn" id="btn-mode-advanced" role="radio" aria-checked="false">Advanced view</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 3-Step Guided Banner (Always Visible) -->
+  <section class="steps-banner" aria-label="Quick Guide">
+    <div class="step-item">
+      <div class="step-num">1</div>
+      <div class="step-text"><strong>Step 1:</strong> Add your students and the subjects they take.</div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">2</div>
+      <div class="step-text"><strong>Step 2:</strong> Click <strong>"Make My Timetable"</strong>.</div>
+    </div>
+    <div class="step-item">
+      <div class="step-num">3</div>
+      <div class="step-text"><strong>Step 3:</strong> See your timetable and download it.</div>
+    </div>
+  </section>
+
+  <!-- "What is this?" Expandable Box -->
+  <section class="what-is-this-bar">
+    <button class="what-toggle" id="btn-toggle-what" aria-expanded="false">
+      <span id="what-arrow">▶</span> <strong>What is this? (Click to understand in 10 seconds)</strong>
+    </button>
+    <div class="what-content" id="what-content" style="display: none;">
+      <p>
+        Imagine a college where some students take both Maths and Physics. If those two exams are on the same day and time, those students are stuck. This tool finds a timetable where that never happens. It does this by drawing a map: each subject is a bubble, and a line joins two subjects if any student takes both. Bubbles joined by a line get different colors, and each color is one exam time. Same color = can safely be held together.
+      </p>
+    </div>
+  </section>
+
+  <!-- Main Container -->
+  <div class="main-container">
+
+    <!-- Left Sidebar: Data Input & Parameters -->
+    <aside class="sidebar">
+
+      <!-- Prominent Example Data Button -->
+      <div class="sample-btn-card">
+        <button class="btn btn-primary btn-block btn-large" id="btn-load-sample">
+          ⚡ Try with example data
+        </button>
+        <p class="sample-helper-text">Not sure where to start? Click this to see how it works.</p>
+      </div>
+
+      <!-- Data Input Card -->
+      <div class="card" id="input-card">
+        <div class="card-title">
+          <span>Add your students & subjects</span>
+        </div>
+
+        <div class="input-tabs" role="tablist">
+          <button class="input-tab-btn active" id="tab-btn-type" role="tab" aria-selected="true">✏️ Type it in</button>
+          <button class="input-tab-btn" id="tab-btn-upload" role="tab" aria-selected="false">📁 Upload a file</button>
+        </div>
+
+        <!-- Type it in tab -->
+        <div id="pane-type" class="input-tab-pane active">
+          <div class="form-group">
+            <label for="enrollment-textarea">Student enrollments:</label>
+            <textarea id="enrollment-textarea" rows="7" placeholder="Riya: Maths, Physics, Chemistry&#10;Arjun: Maths, Computer Science&#10;Ananya: Physics, Chemistry"></textarea>
+          </div>
+        </div>
+
+        <!-- Upload a file tab -->
+        <div id="pane-upload" class="input-tab-pane">
+          <div class="file-drop-box" id="drop-box" tabindex="0" role="button" aria-label="Upload CSV or Text File">
+            <div style="font-size: 28px; margin-bottom: 6px;">📄</div>
+            <div style="font-weight: 700; color: #fff;">Choose a file or drop it here</div>
+            <div style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Accepts .csv or .txt files</div>
+            <input type="file" id="file-input" accept=".csv,.txt,text/plain,text/csv" style="display: none;">
+          </div>
+          <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: center; font-size: 13px;">
+            <button class="btn btn-sm" id="btn-toggle-file-help" style="padding: 2px 8px;">What should my file look like?</button>
+            <button class="btn btn-sm" id="btn-download-template" style="padding: 2px 8px;">Download a blank template</button>
+          </div>
+          <div id="file-help-box" style="display: none; background: #0f172a; padding: 10px; border-radius: 6px; border: 1px solid #334155; margin-top: 8px; font-size: 12px; color: #cbd5e1;">
+            <strong>Format 1 (Simple text):</strong><br>
+            <code>Riya: Maths, Physics, Chemistry</code><br>
+            <code>Arjun: Maths, Computer Science</code><br><br>
+            <strong>Format 2 (CSV with header):</strong><br>
+            <code>student_id,subjects</code><br>
+            <code>S001,"Maths;Physics;Chemistry"</code>
+          </div>
+        </div>
+
+        <!-- Data Summary & Preview Box (shown once data is detected) -->
+        <div id="data-preview-box" class="data-summary-box" style="display: none;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <strong id="preview-summary-text" style="color: #86efac; font-size: 14px;">Great! We found data.</strong>
+            <button class="btn btn-sm" id="btn-edit-data" style="padding: 2px 8px; font-size: 12px;">Edit / start over</button>
+          </div>
+          <table class="preview-table">
+            <thead>
+              <tr>
+                <th>Student</th>
+                <th>Enrolled Subjects</th>
+              </tr>
+            </thead>
+            <tbody id="preview-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Friendly Settings Card -->
+      <div class="card">
+        <div class="card-title">Timetable Settings</div>
+
+        <div class="form-group">
+          <label for="start-date-input">First exam date:</label>
+          <input type="date" id="start-date-input">
+        </div>
+
+        <div class="form-group">
+          <label for="slots-per-day-input">Exams per day (1 to 4):</label>
+          <input type="number" id="slots-per-day-input" min="1" max="4" value="2">
+        </div>
+
+        <div class="form-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="skip-weekends-check" checked>
+            Skip Saturdays and Sundays
+          </label>
+        </div>
+
+        <div style="margin-top: 10px;">
+          <button class="btn btn-sm" id="btn-toggle-timings" style="padding: 2px 6px; font-size: 12px; background: none; border: none; color: #93c5fd; text-decoration: underline; cursor: pointer;">
+            🕒 Change exam timings
+          </button>
+          <div id="timings-box" style="display: none; margin-top: 8px;">
+            <label for="time-labels-input" style="font-size: 12px;">Exam time labels (comma-separated):</label>
+            <input type="text" id="time-labels-input" value="09:00 - 12:00, 14:00 - 17:00">
+          </div>
+        </div>
+      </div>
+
+      <!-- The Single Big Primary Button -->
+      <div>
+        <button class="btn btn-primary btn-large btn-block" id="btn-make-timetable">
+          🚀 Make My Timetable
+        </button>
+      </div>
+
+      <!-- ADVANCED-ONLY SIDEBAR SECTIONS -->
+      <div class="advanced-only" style="display: flex; flex-direction: column; gap: 20px;">
+
+        <!-- Advanced: Method Selection -->
+        <div class="card">
+          <div class="card-title">Method (Algorithm) Selection</div>
+          <div class="form-group">
+            <label for="algo-select">Scheduling method:</label>
+            <select id="algo-select">
+              <option value="welsh-powell" selected>Smart method: busiest subjects first (Welsh-Powell)</option>
+              <option value="dsatur">Smart method: most crowded subjects first (DSATUR)</option>
+              <option value="sequential">Quick method (in the order given) (Sequential Greedy)</option>
+            </select>
+          </div>
+          <p id="algo-description" style="font-size: 13px; color: #94a3b8; line-height: 1.5; margin-top: 6px;">
+            Sorts subjects by how many other subjects they share students with, scheduling the busiest subjects first.
+          </p>
+          <p style="font-size: 12px; color: #64748b; margin-top: 6px;">
+            Note: These methods always give a valid timetable with zero clashes, but are heuristics that may not always find the theoretical absolute minimum number of slots.
+          </p>
+        </div>
+
+        <!-- Advanced: Soft Constraint Optimizer -->
+        <div class="card">
+          <div class="card-title">Breathing Room Optimizer</div>
+          <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 10px;">
+            Rearranges the order of exam times to give students more breathing room between exams on the same day without introducing any clashes.
+          </p>
+          <div class="btn-row">
+            <button class="btn btn-success btn-sm" id="btn-spread-exams" style="flex: 1;">✨ Spread Out Exams</button>
+            <button class="btn btn-sm" id="btn-undo-spread" style="flex: 1;" disabled>↩ Undo</button>
+          </div>
+          <div id="spread-alert" style="margin-top: 8px;"></div>
+        </div>
+
+        <!-- Advanced: Rooms & Capacities -->
+        <div class="card">
+          <div class="card-title">
+            <span>Room Capacities</span>
+            <button class="btn btn-sm" id="btn-allocate-rooms" style="padding: 2px 8px; font-size: 11px;">Reallocate</button>
+          </div>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">
+            Enter rooms as "RoomName,Capacity" (one per line).
+          </p>
+          <div class="form-group">
+            <textarea id="rooms-textarea" rows="4" placeholder="Auditorium,150&#10;LH-101,60"></textarea>
+          </div>
+        </div>
+
+        <!-- Advanced: Stress Test Generator -->
+        <div class="card">
+          <div class="card-title">
+            <span>Stress Test Generator</span>
+            <span style="font-size: 10px; color: var(--text-muted);">Reproducible PRNG</span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;">
+            <div>
+              <label for="stress-subjects" style="font-size: 11px;">Subjects:</label>
+              <input type="number" id="stress-subjects" value="40" min="5" max="100">
+            </div>
+            <div>
+              <label for="stress-students" style="font-size: 11px;">Students:</label>
+              <input type="number" id="stress-students" value="600" min="10" max="2000">
+            </div>
+            <div>
+              <label for="stress-per-student" style="font-size: 11px;">Subj/Student:</label>
+              <input type="number" id="stress-per-student" value="5" min="2" max="10">
+            </div>
+            <div>
+              <label for="stress-seed" style="font-size: 11px;">Seed:</label>
+              <input type="number" id="stress-seed" value="42">
+            </div>
+          </div>
+          <button class="btn btn-block btn-sm" id="btn-generate-stress">🎲 Generate Big Dataset</button>
+        </div>
+
+      </div>
+
+    </aside>
+
+    <!-- Right Workspace: Results & Visualization -->
+    <main class="workspace">
+
+      <!-- Central Friendly Message Area -->
+      <div id="central-message-container" aria-live="polite"></div>
+
+      <!-- Empty State Box (shown before generation) -->
+      <div id="empty-state-box" class="empty-state-box">
+        <div class="empty-state-icon">📋</div>
+        <div class="empty-state-text">
+          <strong>Your timetable will appear here after you add data and click "Make My Timetable".</strong>
+          <p style="font-size: 14px; margin-top: 8px; color: var(--text-dim);">
+            Click <strong>"Try with example data"</strong> on the left to test it right now!
+          </p>
+        </div>
+      </div>
+
+      <!-- Results Section (hidden until generated) -->
+      <div id="results-section" style="display: none; flex-direction: column; gap: 20px;">
+
+        <!-- Big Green Result Banner -->
+        <div class="result-banner" id="result-banner">
+          <div class="result-icon">🎉</div>
+          <div>
+            <div class="result-title" id="result-title">All done! 60 students, 12 subjects.</div>
+            <div class="result-subtitle" id="result-subtitle">
+              Your timetable needs 5 exam times over 3 days. No student has two exams at the same time.
+              <span id="verifier-info-icon" title="We double-checked every student's exams to be sure." style="cursor: help; text-decoration: underline; margin-left: 6px;">ℹ️ Double-checked</span>
+            </div>
+            <div id="simple-method-note" style="font-size: 13px; color: #93c5fd; margin-top: 6px;">
+              💡 We tried 3 different methods and picked the one that needs the fewest exam times.
+            </div>
+          </div>
+        </div>
+
+        <!-- Downloads & Print Bar -->
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div class="btn-row">
+            <button class="btn btn-sm btn-primary" id="btn-download-timetable" disabled title="Make your timetable first">
+              📥 Download Timetable (CSV)
+            </button>
+            <button class="btn btn-sm" id="btn-print-view" disabled title="Make your timetable first">
+              🖨️ Print View
+            </button>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-sm" id="btn-view-table" style="background: var(--accent-primary);">Table View</button>
+            <button class="btn btn-sm" id="btn-view-cards">Calendar Day Cards</button>
+          </div>
+        </div>
+
+        <!-- Timetable Table View -->
+        <div id="timetable-table-container" class="table-responsive">
+          <table>
+            <thead>
+              <tr id="timetable-header-row">
+                <th>Exam Time</th>
+                <th>Date</th>
+                <th>Day</th>
+                <th>Time</th>
+                <th>Subjects</th>
+                <th id="th-rooms" class="advanced-only">Allocated Rooms</th>
+              </tr>
+            </thead>
+            <tbody id="timetable-tbody"></tbody>
+          </table>
+        </div>
+
+        <!-- Timetable Calendar Cards View -->
+        <div id="timetable-cards-container" class="calendar-grid" style="display: none;"></div>
+
+        <!-- Visual Subjects Map Card -->
+        <section class="graph-card" id="map-card">
+          <div class="graph-header">
+            <div class="graph-title">
+              <span>Your subjects map</span>
+              <span id="graph-meta-badge" style="font-size: 13px; color: var(--text-muted); font-weight: normal;"></span>
+            </div>
+            <div class="btn-row">
+              <button class="btn btn-sm" id="btn-fit-graph" title="Fit whole map in view">⤢ Fit View</button>
+              <button class="btn btn-sm advanced-only" id="btn-download-graph" title="Save high-res PNG picture of map">📷 Download Map Picture (PNG)</button>
+            </div>
+          </div>
+
+          <!-- Network Canvas -->
+          <div id="network-viewport" class="graph-viewport"></div>
+          <div id="offline-graph-fallback" style="display: none; padding: 20px; text-align: center; color: #94a3b8; font-size: 14px; background: #0b1120; border-radius: 6px;">
+            The picture of the subjects map couldn't load, probably because you're offline. Your timetable above still works.
+          </div>
+
+          <!-- Plain Language Legend -->
+          <div class="legend-plain-box">
+            <div>
+              <strong>How to read this map:</strong> Each color is one exam time. Subjects with the same color can be held at the same time. Subjects joined by a line share students, so they never get the same color.
+            </div>
+            <div id="graph-legend" class="legend-chips-container"></div>
+          </div>
+
+          <!-- Advanced: Step-by-Step Animation Controls -->
+          <div class="animation-bar advanced-only">
+            <div class="btn-row" style="align-items: center;">
+              <button class="btn btn-sm" id="btn-anim-reset" title="Reset map to uncolored state">↺ Reset</button>
+              <button class="btn btn-sm" id="btn-anim-prev" title="Step Back">⏮ Prev</button>
+              <button class="btn btn-sm btn-primary" id="btn-anim-play" title="Play animation">▶ Play</button>
+              <button class="btn btn-sm btn-primary" id="btn-anim-pause" title="Pause animation" style="display: none;">⏸ Pause</button>
+              <button class="btn btn-sm" id="btn-anim-next" title="Step Forward">⏭ Next</button>
+              <span id="anim-step-counter" style="font-size: 13px; font-weight: 700; color: #94a3b8; margin-left: 8px;">Step 0 / 0</span>
+            </div>
+
+            <div style="display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-muted);">
+              <span>Speed:</span>
+              <input type="range" id="anim-speed-slider" min="150" max="1500" value="600" step="50" style="width: 100px;">
+              <span id="speed-label">600ms</span>
+            </div>
+
+            <div id="anim-step-caption" class="step-caption">
+              Click Play or Next to see how the method assigns an exam time to each subject one by one.
+            </div>
+          </div>
+        </section>
+
+        <!-- ADVANCED-ONLY PANELS -->
+        <div class="advanced-only" style="display: flex; flex-direction: column; gap: 20px;">
+
+          <!-- Advanced: Technical Stats Panel -->
+          <div class="card">
+            <div class="card-title">Technical Stats & Metrics</div>
+            <div class="stats-grid">
+              <div class="stat-box">
+                <div class="stat-label">Total Subjects (|V|)</div>
+                <div class="stat-value" id="stat-subjects">0</div>
+                <div class="stat-desc">Subject bubbles on map</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Total Students</div>
+                <div class="stat-value" id="stat-students">0</div>
+                <div class="stat-desc">Enrollment records</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Conflict Links (|E|)</div>
+                <div class="stat-value" id="stat-edges">0</div>
+                <div class="stat-desc">Pairs sharing students</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Graph Density</div>
+                <div class="stat-value" id="stat-density">0%</div>
+                <div class="stat-desc">2|E| / (|V|(|V|-1))</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Max Degree (Δ)</div>
+                <div class="stat-value" id="stat-max-deg">0</div>
+                <div class="stat-desc">Most conflicting subject</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Upper Bound (Δ + 1)</div>
+                <div class="stat-value" id="stat-upper-bound">0</div>
+                <div class="stat-desc">Theoretical bound</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Exam Times Used</div>
+                <div class="stat-value" id="stat-slots-used">0</div>
+                <div class="stat-desc">Colors assigned</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Exam Days Needed</div>
+                <div class="stat-value" id="stat-exam-days">0</div>
+                <div class="stat-desc">At chosen exams/day</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Verified Clashes</div>
+                <div class="stat-value" id="stat-clashes" style="color: #16a34a;">0</div>
+                <div class="stat-desc">Student collisions (must be 0)</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Back-to-Back Count</div>
+                <div class="stat-value" id="stat-btb">0</div>
+                <div class="stat-desc">Consecutive same-day exams</div>
+              </div>
+              <div class="stat-box">
+                <div class="stat-label">Calculation Time</div>
+                <div class="stat-value" id="stat-runtime">0.000 ms</div>
+                <div class="stat-desc">Measured via performance.now()</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Advanced: Algorithm Comparison Table -->
+          <div class="card">
+            <div class="card-title">
+              <span>Compare Methods (Algorithms)</span>
+              <button class="btn btn-primary btn-sm" id="btn-run-comparison">⚡ Run Comparison</button>
+            </div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px;">
+              Compares all three handcrafted methods on this exact data.
+            </p>
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Method</th>
+                    <th>Exam times needed</th>
+                    <th>Exam times comparison</th>
+                    <th>Students with exams right after each other</th>
+                    <th>Students with two exams at the same time (should be 0)</th>
+                    <th>Time taken</th>
+                  </tr>
+                </thead>
+                <tbody id="comparison-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Advanced: Room Allocation Details -->
+          <div class="card">
+            <div class="card-title">Room Seating Breakdown</div>
+            <div id="room-warnings-list" style="margin-bottom: 10px;"></div>
+            <div class="table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Exam Time</th>
+                    <th>Subject</th>
+                    <th>Students</th>
+                    <th>Allocated Room(s)</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="rooms-detail-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Advanced: Independent Verification Log -->
+          <div class="card">
+            <div class="card-title">
+              <span>Independent Student Audit Log</span>
+              <button class="btn btn-sm btn-primary" id="btn-re-verify">Re-verify</button>
+            </div>
+            <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Student ID</th>
+                    <th>Total Subjects</th>
+                    <th>Assigned Exam Times</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="verifier-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+      <!-- FAQ Inline Help Box -->
+      <section class="faq-box" id="faq-box" style="display: none;">
+        <div class="faq-title">
+          <span>❓ Frequently Asked Questions</span>
+          <button class="btn btn-sm" id="btn-close-faq" style="padding: 2px 8px; font-size: 12px;">Close</button>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-q">1. What do I type in?</div>
+          <div class="faq-a">
+            Just type each student's name followed by a colon and their subjects separated by commas. For example: <code>Riya: Maths, Physics, Chemistry</code>. You can also upload a standard spreadsheet CSV file with headers <code>student_id,subjects</code>.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-q">2. What if two subjects have the same name spelled with different capitals?</div>
+          <div class="faq-a">
+            The tool automatically treats 'maths', 'Maths', and 'MATHS' as the exact same subject. You don't need to worry about capitalization.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-q">3. Why does the timetable need more exam times than I expected?</div>
+          <div class="faq-a">
+            If many students take multiple subjects together, those subjects cannot happen at the same time without causing clashes. The tool calculates the minimum number of exam times required to keep everyone 100% clash-free.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-q">4. Can I change the exam times or dates?</div>
+          <div class="faq-a">
+            Yes! In the Settings card on the left, you can change the first exam date, set how many exams happen per day (1 to 4), toggle weekend skipping, or click "Change exam timings" to edit the exact morning/afternoon hours.
+          </div>
+        </div>
+
+        <div class="faq-item">
+          <div class="faq-q">5. Is my data uploaded anywhere?</div>
+          <div class="faq-a">
+            <strong>No, absolutely not.</strong> Everything runs 100% inside your web browser on your own computer. No data is ever sent to any server, database, or external service.
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+  </div>
+
+  <!-- Load JavaScript Modules -->
+  <script src="sample-data.js"></script>
+  <script src="graph.js"></script>
+  <script src="algorithms.js"></script>
+  <script src="scheduler.js"></script>
+  <script src="ui.js"></script>
+
+</body>
+</html>
