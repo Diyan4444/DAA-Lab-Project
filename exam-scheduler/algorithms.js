@@ -135,14 +135,23 @@
     const colorOf = {};
     const steps = [];
 
-    // Sort subjects by degree descending, weighted degree descending, name ascending
-    const sorted = [...graph.subjects].sort((a, b) => {
-      const degDiff = graph.degrees[b] - graph.degrees[a];
-      if (degDiff !== 0) return degDiff;
-      const wDegDiff = graph.weightedDegrees[b] - graph.weightedDegrees[a];
-      if (wDegDiff !== 0) return wDegDiff;
-      return a.localeCompare(b);
-    });
+    // Stable multi-key radix-style sort using Counting Sort:
+    // 1. Least significant key: subject name ascending (comparison sort)
+    // 2. Middle key: weighted degree descending (stable counting sort)
+    // 3. Most significant key: degree descending (stable counting sort)
+    let sorted = [...graph.subjects].sort((a, b) => a.localeCompare(b));
+    if (global.SortingModule && global.SortingModule.countingSortBy) {
+      sorted = global.SortingModule.countingSortBy(sorted, s => graph.weightedDegrees[s] || 0, { descending: true }).sorted;
+      sorted = global.SortingModule.countingSortBy(sorted, s => graph.degrees[s] || 0, { descending: true }).sorted;
+    } else {
+      sorted.sort((a, b) => {
+        const degDiff = graph.degrees[b] - graph.degrees[a];
+        if (degDiff !== 0) return degDiff;
+        const wDegDiff = graph.weightedDegrees[b] - graph.weightedDegrees[a];
+        if (wDegDiff !== 0) return wDegDiff;
+        return a.localeCompare(b);
+      });
+    }
 
     let uncolored = [...sorted];
     let currentSlot = 0;

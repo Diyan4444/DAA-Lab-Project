@@ -72,8 +72,12 @@
 
   <!-- Load Modules Under Test -->
   <script src="sample-data.js"></script>
+  <script src="sorting.js"></script>
   <script src="graph.js"></script>
+  <script src="mst.js"></script>
   <script src="algorithms.js"></script>
+  <script src="textmatch.js"></script>
+  <script src="huffman.js"></script>
   <script src="scheduler.js"></script>
 
   <script>
@@ -490,7 +494,12 @@ Ananya: Chemistry, Physics`;
           'node',
           'edge',
           'degree',
-          'heuristic'
+          'heuristic',
+          'huffman',
+          'knapsack',
+          'spanning',
+          'levenshtein',
+          'lcs'
         ];
 
         for (const word of forbiddenWords) {
@@ -529,6 +538,566 @@ Ananya: Chemistry, Physics`;
 
         const downloadBtn = frameDoc.getElementById('btn-download-timetable');
         assert(Boolean(downloadBtn), 'Download timetable button exists');
+      });
+
+      // ----------------------------------------------------
+      // TEST 15: Counting Sort Verification
+      // ----------------------------------------------------
+      test('15. Counting Sort Verification', 'Verifies stability, ascending/descending, fallback guards, Welsh-Powell equivalence, and room allocation equivalence', () => {
+        assert(Boolean(window.SortingModule), 'SortingModule is loaded');
+
+        // 1. Basic sorting & stability
+        const items = [
+          { id: 1, val: 3 },
+          { id: 2, val: 1 },
+          { id: 3, val: 3 },
+          { id: 4, val: 0 },
+          { id: 5, val: 1 }
+        ];
+
+        const asc = window.SortingModule.countingSortBy(items, x => x.val);
+        assert(asc.usedCounting === true, 'Used counting sort for non-negative integers');
+        const ascKeys = asc.sorted.map(x => x.val);
+        assert(ascKeys.join(',') === '0,1,1,3,3', 'Ascending sort correct');
+        // Stability check for value 1: id 2 should come before id 5
+        const idsFor1 = asc.sorted.filter(x => x.val === 1).map(x => x.id);
+        assert(idsFor1.join(',') === '2,5', 'Stable ascending order preserved');
+        // Stability check for value 3: id 1 should come before id 3
+        const idsFor3 = asc.sorted.filter(x => x.val === 3).map(x => x.id);
+        assert(idsFor3.join(',') === '1,3', 'Stable ascending order preserved for 3');
+
+        // Descending sort
+        const desc = window.SortingModule.countingSortBy(items, x => x.val, { descending: true });
+        assert(desc.sorted.map(x => x.val).join(',') === '3,3,1,1,0', 'Descending sort correct');
+        assert(desc.sorted.filter(x => x.val === 3).map(x => x.id).join(',') === '1,3', 'Stable descending order preserved');
+
+        // Fallbacks without throwing
+        const neg = window.SortingModule.countingSortBy([{ k: -5 }, { k: 2 }], x => x.k);
+        assert(neg.usedCounting === false, 'Negative key triggered comparison fallback');
+        assert(neg.sorted[0].k === -5, 'Negative fallback sorted correctly');
+
+        const floatKey = window.SortingModule.countingSortBy([{ k: 2.5 }, { k: 1.1 }], x => x.k);
+        assert(floatKey.usedCounting === false, 'Float key triggered fallback');
+
+        const huge = window.SortingModule.countingSortBy([{ k: 0 }, { k: 500 }], x => x.k, { maxRange: 100 });
+        assert(huge.usedCounting === false, 'Range > maxRange triggered fallback');
+
+        const empty = window.SortingModule.countingSortBy([], x => x);
+        assert(empty.sorted.length === 0, 'Empty array handled gracefully');
+
+        // Histogram
+        const hist = window.SortingModule.buildHistogram([1, 2, 2, 4, 1]);
+        assert(hist[1] === 2 && hist[2] === 2 && hist[4] === 1 && (hist[3] || 0) === 0, 'Histogram computed correctly');
+
+        // Welsh-Powell integration equivalence on sample data & 20 seeded graphs
+        function oldComparatorSort(subjects, degrees, weightedDegrees) {
+          return [...subjects].sort((a, b) => {
+            const degDiff = degrees[b] - degrees[a];
+            if (degDiff !== 0) return degDiff;
+            const wDegDiff = weightedDegrees[b] - weightedDegrees[a];
+            if (wDegDiff !== 0) return wDegDiff;
+            return a.localeCompare(b);
+          });
+        }
+
+        // Check on sample data
+        const parsedSample = GraphModule.parseEnrollmentCSV(window.SAMPLE_WIDE_CSV);
+        const sampleGraph = GraphModule.buildConflictGraph(parsedSample.students, parsedSample.subjectDisplayMap);
+        const oldSampleSorted = oldComparatorSort(sampleGraph.subjects, sampleGraph.degrees, sampleGraph.weightedDegrees);
+        // Emulate Welsh-Powell radix-style counting sort
+        let newSampleSorted = [...sampleGraph.subjects].sort((a, b) => a.localeCompare(b));
+        newSampleSorted = window.SortingModule.countingSortBy(newSampleSorted, s => sampleGraph.weightedDegrees[s] || 0, { descending: true }).sorted;
+        newSampleSorted = window.SortingModule.countingSortBy(newSampleSorted, s => sampleGraph.degrees[s] || 0, { descending: true }).sorted;
+        assert(oldSampleSorted.join(',') === newSampleSorted.join(','), 'Welsh-Powell sort order matches old comparator on sample data');
+
+        // Check on 20 seeded random graphs
+        for (let seed = 1; seed <= 20; seed++) {
+          const rand = mulberry32(seed * 777);
+          const pool = ['Math', 'Physics', 'Chem', 'Bio', 'Eng', 'Hist', 'CS', 'Art', 'Music', 'Econ'];
+          const stList = [];
+          for (let i = 1; i <= 30; i++) {
+            const subjs = new Set();
+            for (let j = 0; j < 4; j++) subjs.add(pool[Math.floor(rand() * pool.length)]);
+            stList.push({ id: `S${i}`, subjects: Array.from(subjs) });
+          }
+          const g = GraphModule.buildConflictGraph(stList);
+          const oldSorted = oldComparatorSort(g.subjects, g.degrees, g.weightedDegrees);
+          let newSorted = [...g.subjects].sort((a, b) => a.localeCompare(b));
+          newSorted = window.SortingModule.countingSortBy(newSorted, s => g.weightedDegrees[s] || 0, { descending: true }).sorted;
+          newSorted = window.SortingModule.countingSortBy(newSorted, s => g.degrees[s] || 0, { descending: true }).sorted;
+          assert(oldSorted.join(',') === newSorted.join(','), `Seed ${seed} Welsh-Powell sort order matches old comparator`);
+        }
+
+        // Room allocation equivalence
+        const testEntries = [
+          {
+            slotIndex: 0,
+            slotNumber: 1,
+            date: '2026-10-26',
+            time: '09:00 - 12:00',
+            subjects: [
+              { name: 'Physics', studentCount: 30 },
+              { name: 'Maths', studentCount: 50 },
+              { name: 'Chemistry', studentCount: 20 }
+            ]
+          }
+        ];
+        const testRooms = [
+          { name: 'Room A', capacity: 60 },
+          { name: 'Room B', capacity: 40 },
+          { name: 'Room C', capacity: 25 }
+        ];
+        const allocRes = SchedulerModule.allocateRooms(testEntries, testRooms);
+        assert(allocRes.warnings.length === 0, 'Rooms allocated without warnings');
+        assert(allocRes.allocations[0].length === 3, 'All 3 subjects allocated');
+        assert(allocRes.allocations[0][0].subject === 'Maths', 'Largest subject allocated first');
+      });
+
+      // ----------------------------------------------------
+      // TEST 16: Huffman Encoding Verification
+      // ----------------------------------------------------
+      test('16. Huffman Encoding Verification', 'Verifies known small example (224 bits), prefix-free property, pack/unpack, round-trip on 20 random datasets, single symbol', () => {
+        assert(Boolean(window.HuffmanModule), 'HuffmanModule is loaded');
+
+        // 1. Hand-checked classic textbook instance
+        // Frequencies: 5, 9, 12, 13, 16, 45 (total 100)
+        // Standard Huffman weighted path length = 224 bits
+        const freqs = [5, 9, 12, 13, 16, 45];
+        const treeRoot = window.HuffmanModule.buildHuffmanTree(freqs);
+        const codes = window.HuffmanModule.assignCodes(treeRoot);
+
+        let totalWeightedBits = 0;
+        for (let i = 0; i < freqs.length; i++) {
+          totalWeightedBits += freqs[i] * codes[i].length;
+        }
+        assert(totalWeightedBits === 224, `Hand-checked Huffman bit length is 224 (got ${totalWeightedBits})`);
+
+        // 2. Prefix-free verification
+        const codeList = Object.values(codes);
+        for (let i = 0; i < codeList.length; i++) {
+          for (let j = 0; j < codeList.length; j++) {
+            if (i !== j) {
+              assert(!codeList[j].startsWith(codeList[i]), `Code ${codeList[i]} is not a prefix of ${codeList[j]}`);
+            }
+          }
+        }
+
+        // 3. Pack / unpack round trip
+        const testBitString = '101100111000101010111101001';
+        const packed = window.HuffmanModule.packBits(testBitString);
+        const unpacked = window.HuffmanModule.unpackBits(packed, testBitString.length);
+        assert(unpacked === testBitString, 'packBits / unpackBits round-trip exact match');
+
+        // 4. Single symbol edge case
+        const singleComp = window.HuffmanModule.compressEnrollments([{ id: 'S01', subjects: ['Physics'] }]);
+        assert(singleComp.bitLength > 0, 'Single symbol compressed without crashing');
+        const singleDecomp = window.HuffmanModule.decompressEnrollments(singleComp);
+        assert(singleDecomp.length === 1 && singleDecomp[0].subjects[0] === 'Physics', 'Single symbol decompressed correctly');
+
+        // 5. Determinism test
+        const sampleForHuffman = GraphModule.parseEnrollmentCSV(window.SAMPLE_WIDE_CSV).students;
+        const comp1 = window.HuffmanModule.compressEnrollments(sampleForHuffman);
+        const comp2 = window.HuffmanModule.compressEnrollments(sampleForHuffman);
+        assert(comp1.bitLength === comp2.bitLength, 'Huffman compression bit length is deterministic');
+        assert(JSON.stringify(comp1.codes) === JSON.stringify(comp2.codes), 'Huffman codes are identical across runs');
+
+        // 6. Round-trip verification on sample data and 20 seeded random datasets
+        const sampleDecomp = window.HuffmanModule.decompressEnrollments(comp1);
+        assert(sampleDecomp.length === sampleForHuffman.length, 'Sample data round trip count matches');
+
+        for (let seed = 1; seed <= 20; seed++) {
+          const rand = mulberry32(seed * 999);
+          const pool = ['SubjA', 'SubjB', 'SubjC', 'SubjD', 'SubjE', 'SubjF', 'SubjG'];
+          const stList = [];
+          for (let i = 1; i <= 25; i++) {
+            const subjs = new Set();
+            const count = 1 + Math.floor(rand() * 4);
+            while (subjs.size < count) {
+              subjs.add(pool[Math.floor(rand() * pool.length)]);
+            }
+            stList.push({ id: `ST_${i}`, subjects: Array.from(subjs) });
+          }
+
+          const c = window.HuffmanModule.compressEnrollments(stList);
+          const d = window.HuffmanModule.decompressEnrollments(c);
+
+          assert(d.length === stList.length, `Seed ${seed}: decompressed student count matches`);
+          for (let i = 0; i < stList.length; i++) {
+            assert(stList[i].id === d[i].id, `Seed ${seed}: student ID ${stList[i].id} matches`);
+            assert(stList[i].subjects.slice().sort().join(',') === d[i].subjects.slice().sort().join(','), `Seed ${seed}: student subjects match exactly`);
+          }
+        }
+      });
+
+      // ----------------------------------------------------
+      // TEST 17: 0/1 Knapsack & Room Shortage Overflow Verification
+      // ----------------------------------------------------
+      test('17. 0/1 Knapsack & Room Shortage Overflow Verification', 'Verifies DP table, capacity bounds, oversize guard, reality check with allocateRooms, clash-free overflow plan', () => {
+        assert(typeof SchedulerModule.knapsackSelect === 'function', 'knapsackSelect exists');
+        assert(typeof SchedulerModule.planRoomOverflow === 'function', 'planRoomOverflow exists');
+        assert(typeof SchedulerModule.applyRoomOverflowPlan === 'function', 'applyRoomOverflowPlan exists');
+
+        // 1. Hand-checked instance
+        // weights [1,3,4,5], values [1,4,5,7], capacity 7 -> best value 9 (weights 3 + 4, values 4 + 5)
+        const items = [
+          { name: 'Item1', weight: 1, value: 1 },
+          { name: 'Item2', weight: 3, value: 4 },
+          { name: 'Item3', weight: 4, value: 5 },
+          { name: 'Item4', weight: 5, value: 7 }
+        ];
+        const res = SchedulerModule.knapsackSelect(items, 7);
+        assert(res.totalValue === 9, `Knapsack best value is 9 (got ${res.totalValue})`);
+        assert(res.totalWeight <= 7, `Total weight ${res.totalWeight} <= capacity 7`);
+        assert(res.chosen.includes('Item2') && res.chosen.includes('Item3'), 'Chosen items are Item2 and Item3');
+
+        // 2. Oversize guard
+        const oversized = SchedulerModule.knapsackSelect(items, 5000000);
+        assert(oversized.skipped === true && oversized.reason === 'too-large', 'Oversized capacity guarded safely without freezing');
+
+        // 3. Brute force comparison on small random instances
+        for (let iter = 1; iter <= 5; iter++) {
+          const rand = mulberry32(iter * 1234);
+          const smallItems = [];
+          for (let i = 0; i < 5; i++) {
+            smallItems.push({
+              name: `I${i}`,
+              weight: 1 + Math.floor(rand() * 10),
+              value: 1 + Math.floor(rand() * 20)
+            });
+          }
+          const cap = 15;
+          const dpRes = SchedulerModule.knapsackSelect(smallItems, cap);
+
+          // Brute force
+          let maxVal = 0;
+          for (let mask = 0; mask < (1 << smallItems.length); mask++) {
+            let curW = 0;
+            let curV = 0;
+            for (let i = 0; i < smallItems.length; i++) {
+              if (mask & (1 << i)) {
+                curW += smallItems[i].weight;
+                curV += smallItems[i].value;
+              }
+            }
+            if (curW <= cap && curV > maxVal) {
+              maxVal = curV;
+            }
+          }
+          assert(dpRes.totalValue === maxVal, `Iteration ${iter}: DP knapsack (${dpRes.totalValue}) matches brute force (${maxVal})`);
+        }
+
+        // 4. planRoomOverflow reality check with allocateRooms
+        const sampleForRooms = GraphModule.parseEnrollmentCSV(window.SAMPLE_WIDE_CSV);
+        const sampleGraph = GraphModule.buildConflictGraph(sampleForRooms.students, sampleForRooms.subjectDisplayMap);
+        const wpRes = AlgorithmsModule.welshPowell(sampleGraph, false);
+        // Provide small rooms that force overflow
+        const tinyRooms = [
+          { name: 'Room S1', capacity: 15 },
+          { name: 'Room S2', capacity: 15 }
+        ];
+        const tt = SchedulerModule.generateTimetable({
+          graph: sampleGraph,
+          colorOf: wpRes.colorOf,
+          rooms: tinyRooms
+        });
+
+        const plan = SchedulerModule.planRoomOverflow(tt, tinyRooms);
+        assert(plan.length > 0, 'Plan generated for slots with room shortfall');
+
+        // Verify that every kept set produces ZERO warnings when tested against allocateRooms
+        for (const p of plan) {
+          const entry = tt.entries.find(e => e.slotIndex === p.slotIndex);
+          const keptSubjs = entry.subjects.filter(s => p.keep.includes(s.name));
+          const testAlloc = SchedulerModule.allocateRooms([{
+            slotIndex: p.slotIndex,
+            slotNumber: p.slotNumber,
+            date: entry.date,
+            time: entry.time,
+            subjects: keptSubjs
+          }], tinyRooms);
+          assert(testAlloc.warnings.length === 0, `Slot ${p.slotNumber} kept subjects produce zero warnings`);
+        }
+
+        // 5. applyRoomOverflowPlan preserves 0 clashes
+        const naturalOrder = Array.from({ length: wpRes.slotCount }, (_, i) => i);
+        const applied = SchedulerModule.applyRoomOverflowPlan(sampleGraph, wpRes.colorOf, naturalOrder, plan);
+        assert(applied.slotCount > wpRes.slotCount, 'Slot count expanded to seat overflow clash-free');
+
+        const v = SchedulerModule.verifySchedule(sampleGraph.students, applied.colorOf);
+        assert(v.valid === true && v.clashCount === 0, 'Applied room overflow schedule is 100% clash-free');
+      });
+
+      // ----------------------------------------------------
+      // TEST 18: Spanning Trees (Kruskal, Prim, Preorder) Verification
+      // ----------------------------------------------------
+      test('18. Spanning Trees (Kruskal, Prim, Preorder) Verification', 'Verifies Kruskal & Prim total weight equivalence, forest component counts, preorder permutation, reproducible spreadOutExams', () => {
+        assert(Boolean(window.MSTModule), 'MSTModule is loaded');
+
+        // 1. Kruskal & Prim on connected graph
+        const nodes = ['A', 'B', 'C', 'D'];
+        const edges = [
+          { u: 'A', v: 'B', weight: 1 },
+          { u: 'B', v: 'C', weight: 2 },
+          { u: 'C', v: 'D', weight: 3 },
+          { u: 'A', v: 'C', weight: 4 },
+          { u: 'B', v: 'D', weight: 5 },
+          { u: 'A', v: 'D', weight: 6 }
+        ];
+
+        const kruskalRes = window.MSTModule.kruskal(nodes, edges);
+        assert(kruskalRes.edges.length === 3, 'Kruskal chose V-1 = 3 edges');
+        assert(kruskalRes.totalWeight === 6, `Kruskal total weight is 6 (got ${kruskalRes.totalWeight})`);
+        assert(kruskalRes.components === 1, 'Single connected component');
+
+        // Matrix for Prim:
+        // A=0, B=1, C=2, D=3
+        const matrix = [
+          [0, 1, 4, 6],
+          [1, 0, 2, 5],
+          [4, 2, 0, 3],
+          [6, 5, 3, 0]
+        ];
+        const primRes = window.MSTModule.prim(matrix, 0);
+        assert(primRes.edges.length === 3, 'Prim chose 3 edges');
+        assert(primRes.totalWeight === 6, `Prim total weight matches Kruskal (got ${primRes.totalWeight})`);
+
+        // 2. Disconnected graph (Forest)
+        const discNodes = ['A', 'B', 'C', 'D'];
+        const discEdges = [
+          { u: 'A', v: 'B', weight: 5 },
+          { u: 'C', v: 'D', weight: 7 }
+        ];
+        const forestRes = window.MSTModule.kruskal(discNodes, discEdges);
+        assert(forestRes.components === 2, 'Kruskal reports 2 components for disconnected graph');
+        assert(forestRes.edges.length === 2, 'Forest has V - components = 4 - 2 = 2 edges');
+
+        // 3. Preorder traversal of tree
+        const treeEdges = [
+          { a: 0, b: 1, weight: 1 },
+          { a: 0, b: 2, weight: 2 },
+          { a: 1, b: 3, weight: 3 }
+        ];
+        const order = window.MSTModule.preorderFromTree(4, treeEdges, 0);
+        assert(order.length === 4, 'Preorder returned all 4 nodes');
+        const sortedOrder = [...order].sort();
+        assert(sortedOrder.join(',') === '0,1,2,3', 'Preorder is a complete permutation of 0..K-1');
+
+        // 4. spreadOutExams (slotCount > 8 branch) reproducibility and back-to-back bound
+        const pool = ['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9', 'S10'];
+        const bigStudents = [];
+        for (let i = 0; i < pool.length; i++) {
+          for (let j = i + 1; j < pool.length; j++) {
+            bigStudents.push({ id: `ST_${i}_${j}`, subjects: [pool[i], pool[j]] });
+          }
+        }
+        const g = GraphModule.buildConflictGraph(bigStudents);
+        const seq = AlgorithmsModule.sequentialGreedy(g, false);
+        assert(seq.slotCount >= 9, 'Graph has >= 9 slots for 2-opt branch');
+
+        const spread1 = SchedulerModule.spreadOutExams(g, seq.colorOf, 2);
+        const spread2 = SchedulerModule.spreadOutExams(g, seq.colorOf, 2);
+
+        assert(spread1.afterCount <= spread1.beforeCount, 'spreadOutExams never increases back-to-backs');
+        assert(spread1.optimizedOrder.join(',') === spread2.optimizedOrder.join(','), 'spreadOutExams is 100% deterministic & reproducible across runs');
+      });
+
+      // ----------------------------------------------------
+      // TEST 19: DP String Matching & Typo Catcher Verification
+      // ----------------------------------------------------
+      test('19. DP String Matching & Typo Catcher Verification', 'Verifies Levenshtein, LCS, level protection, typo detection flags, and student merge remapping', () => {
+        assert(Boolean(window.TextMatchModule), 'TextMatchModule is loaded');
+
+        // 1. Levenshtein edit distance
+        assert(window.TextMatchModule.levenshtein('kitten', 'sitting') === 3, 'levenshtein("kitten", "sitting") === 3');
+        assert(window.TextMatchModule.levenshtein('', 'abc') === 3, 'levenshtein("", "abc") === 3');
+        assert(window.TextMatchModule.levenshtein('abc', 'abc') === 0, 'levenshtein("abc", "abc") === 0');
+
+        // 2. LCS length & string
+        assert(window.TextMatchModule.lcsLength('AGGTAB', 'GXTXAYB') === 4, 'lcsLength("AGGTAB", "GXTXAYB") === 4');
+        assert(window.TextMatchModule.lcsString('AGGTAB', 'GXTXAYB') === 'GTAB', 'lcsString("AGGTAB", "GXTXAYB") === "GTAB"');
+
+        // 3. splitLevelSuffix & protection
+        const math2 = window.TextMatchModule.splitLevelSuffix('maths-ii');
+        const math3 = window.TextMatchModule.splitLevelSuffix('maths-iii');
+        assert(math2.suffix === 'ii', 'Detected roman numeral suffix II');
+        assert(math3.suffix === 'iii', 'Detected roman numeral suffix III');
+
+        const linux = window.TextMatchModule.splitLevelSuffix('linux');
+        assert(linux.suffix === '', 'Word "Linux" suffix is empty (not broken into "linu" + "x")');
+
+        // 4. findSimilarSubjects flags
+        const names = [
+          'Mathematcs', 'Mathematics',
+          'Maths-II', 'Maths-III',
+          'Data Structure', 'Data Structures',
+          'AI', 'AL'
+        ];
+        const counts = {
+          'Mathematcs': 5,
+          'Mathematics': 40,
+          'Maths-II': 20,
+          'Maths-III': 25,
+          'Data Structure': 10,
+          'Data Structures': 50,
+          'AI': 15,
+          'AL': 12
+        };
+
+        const similar = window.TextMatchModule.findSimilarSubjects(names, counts);
+        const pairs = similar.map(s => [s.a, s.b].sort().join(' <-> '));
+
+        // Assert "Mathematcs" vs "Mathematics" is flagged
+        assert(pairs.some(p => p.includes('Mathematcs') && p.includes('Mathematics')), '"Mathematcs" vs "Mathematics" is flagged');
+
+        // Assert "Data Structure" vs "Data Structures" is flagged
+        assert(pairs.some(p => p.includes('Data Structure') && p.includes('Data Structures')), '"Data Structure" vs "Data Structures" is flagged');
+
+        // Assert "Maths-II" vs "Maths-III" is NOT flagged
+        assert(!pairs.some(p => p.includes('Maths-II') && p.includes('Maths-III')), '"Maths-II" vs "Maths-III" is NOT flagged (course level protection)');
+
+        // Assert "AI" vs "AL" is NOT flagged (too short)
+        assert(!pairs.some(p => p.includes('AI') && p.includes('AL')), '"AI" vs "AL" is NOT flagged (length < 4)');
+
+        // Dismissed pair test
+        const dismissedSet = new Set([['Mathematcs', 'Mathematics'].sort().join('|||')]);
+        const filtered = window.TextMatchModule.findSimilarSubjects(names, counts, { dismissed: dismissedSet });
+        assert(!filtered.some(s => s.a.includes('Mathematcs') || s.b.includes('Mathematcs')), 'Dismissed pair is skipped');
+
+        // 5. applySubjectMerges immutability & de-duplication
+        const originalStudents = [
+          { id: 'S1', subjects: ['Mathematcs', 'Physics'] },
+          { id: 'S2', subjects: ['Mathematics', 'Mathematcs', 'Chemistry'] }
+        ];
+        const mergeMap = new Map([['Mathematcs', 'Mathematics']]);
+        const mergedStudents = window.TextMatchModule.applySubjectMerges(originalStudents, mergeMap);
+
+        // Input was not mutated
+        assert(originalStudents[0].subjects.includes('Mathematcs'), 'Original student array was NOT mutated');
+        // S1 renamed
+        assert(mergedStudents[0].subjects.includes('Mathematics') && !mergedStudents[0].subjects.includes('Mathematcs'), 'S1 subject renamed');
+        // S2 had both: de-duplicated to single Mathematics
+        assert(mergedStudents[1].subjects.filter(s => s === 'Mathematics').length === 1, 'S2 subjects de-duplicated');
+        assert(mergedStudents[1].subjects.length === 2, 'S2 total subjects reduced from 3 to 2');
+      });
+
+      // ----------------------------------------------------
+      // TEST 20: XSS & Safe String Rendering Invariant
+      // ----------------------------------------------------
+      test('20. XSS & Safe String Rendering Invariant', 'Malicious tags and user strings render as text, never executing or injecting DOM elements', () => {
+        const frame = document.getElementById('app-test-frame');
+        assert(Boolean(frame), 'App test frame exists');
+        const frameWin = frame.contentWindow;
+        assert(Boolean(frameWin && frameWin.UIHelpers), 'UIHelpers exposed on window');
+
+        const maliciousInput = '<img src=x onerror=alert(1)>';
+        const escaped = frameWin.UIHelpers.escapeHtml(maliciousInput);
+        assert(!escaped.includes('<img'), 'escapeHtml escapes opening tag bracket');
+        assert(escaped.includes('&lt;img'), 'escapeHtml replaces < with &lt;');
+
+        // Simulate rendering untrusted student ID and subject into DOM nodes
+        const dummyTable = document.createElement('table');
+        const tr = document.createElement('tr');
+        const tdId = document.createElement('td');
+        const strong = document.createElement('strong');
+        strong.textContent = maliciousInput;
+        tdId.appendChild(strong);
+        tr.appendChild(tdId);
+        dummyTable.appendChild(tr);
+
+        // Verify no img element was injected into DOM
+        const imgElements = dummyTable.querySelectorAll('img');
+        assert(imgElements.length === 0, 'No HTML img elements created in DOM');
+        assert(tdId.textContent === maliciousInput, 'Text content preserved verbatim');
+      });
+
+      // ----------------------------------------------------
+      // TEST 21: CSV Formula Injection Sanitization Invariant
+      // ----------------------------------------------------
+      test('21. CSV Formula Injection Sanitization', 'Fields starting with =, +, -, @, \\t, or \\r are prepended with single quote and properly escaped', () => {
+        const frame = document.getElementById('app-test-frame');
+        assert(Boolean(frame), 'App test frame exists');
+        const frameWin = frame.contentWindow;
+        assert(Boolean(frameWin && frameWin.UIHelpers && frameWin.UIHelpers.sanitizeCSVField), 'sanitizeCSVField is available');
+
+        const sanitize = frameWin.UIHelpers.sanitizeCSVField;
+
+        // Formula triggers
+        assert(sanitize('=1+1') === '"\'=1+1"', 'Prepends single quote to = formula');
+        assert(sanitize('+SUM(A1:A5)') === '"\'+SUM(A1:A5)"', 'Prepends single quote to + formula');
+        assert(sanitize('-5*2') === '"\'-5*2"', 'Prepends single quote to - formula');
+        assert(sanitize('@SUM(A1)') === '"\'@SUM(A1)"', 'Prepends single quote to @ formula');
+        assert(sanitize('\tcmd') === '"\'\tcmd"', 'Prepends single quote to tab trigger');
+        assert(sanitize('\rcmd') === '"\'\rcmd"', 'Prepends single quote to carriage return trigger');
+
+        // Quotes escaping
+        assert(sanitize('Physics "Adv"') === '"Physics ""Adv"""', 'Doubles internal quotation marks');
+
+        // Normal strings and numbers
+        assert(sanitize('Mathematics') === '"Mathematics"', 'Standard string wrapped in quotes');
+        assert(sanitize(100) === '"100"', 'Numbers converted to quoted string');
+        assert(sanitize(null) === '""', 'Null value handled safely');
+        assert(sanitize(undefined) === '""', 'Undefined value handled safely');
+      });
+
+      // ----------------------------------------------------
+      // TEST 22: Independent Clash Verifier Negative Invariant
+      // ----------------------------------------------------
+      test('22. Independent Verifier Negative Test', 'verifySchedule correctly flags duplicate slots and missing subjects', () => {
+        const students = [
+          { id: 'S01', subjects: ['Maths', 'Physics'] },
+          { id: 'S02', subjects: ['Physics', 'Chemistry'] }
+        ];
+
+        // Intentionally conflicting coloring: Maths and Physics in Slot 0
+        const clashingColorOf = {
+          Maths: 0,
+          Physics: 0,
+          Chemistry: 1
+        };
+
+        const resultClash = SchedulerModule.verifySchedule(students, clashingColorOf);
+        assert(resultClash.valid === false, 'Clashing coloring must fail validation');
+        assert(resultClash.clashCount === 1, 'Exactly 1 student clash detected');
+        assert(resultClash.clashes[0].studentId === 'S01', 'Clash correctly identifies student S01');
+        assert(resultClash.clashes[0].slot === 0, 'Clash correctly identifies slot 0');
+        assert(resultClash.clashes[0].subjects.includes('Maths') && resultClash.clashes[0].subjects.includes('Physics'), 'Clash identifies clashing subjects');
+
+        // Missing subject assignment
+        const missingColorOf = {
+          Maths: 0,
+          Chemistry: 1
+          // Physics unassigned
+        };
+        const resultMissing = SchedulerModule.verifySchedule(students, missingColorOf);
+        assert(resultMissing.valid === false, 'Missing subject coloring must fail validation');
+        assert(resultMissing.clashes.some(c => c.slot === -1 && c.subjects.includes('Physics')), 'Unassigned subject flagged with slot -1');
+      });
+
+      // ----------------------------------------------------
+      // TEST 23: Calendar Date Arithmetic & Boundary Edge Cases
+      // ----------------------------------------------------
+      test('23. Calendar Date Arithmetic & Boundaries', 'computeExamDate handles normal offset, weekend skipping, month rollover, leap years, and fallback safely', () => {
+        // Monday -> Tuesday
+        const d1 = SchedulerModule.computeExamDate('2026-10-26', 1, false);
+        assert(d1.dateStr === '2026-10-27', 'Next day is Tuesday 2026-10-27');
+        assert(d1.dayName === 'Tuesday', 'Day name matches Tuesday');
+
+        // Friday -> Monday (skip weekends)
+        const d2 = SchedulerModule.computeExamDate('2026-10-30', 1, true);
+        assert(d2.dateStr === '2026-11-02', 'Friday + 1 working day skips weekend to Monday 2026-11-02');
+        assert(d2.dayName === 'Monday', 'Day name matches Monday');
+
+        // Leap Year transition: 2028 is a leap year (Feb 28 is Monday)
+        const d3 = SchedulerModule.computeExamDate('2028-02-28', 1, false);
+        assert(d3.dateStr === '2028-02-29', 'Leap year Feb 28 advances to Feb 29');
+
+        // Year rollover: Dec 31 -> Jan 1
+        const d4 = SchedulerModule.computeExamDate('2026-12-31', 1, false);
+        assert(d4.dateStr === '2027-01-01', 'Dec 31 advances to Jan 01 next year');
+
+        // Fallback on invalid date
+        const dFallback = SchedulerModule.computeExamDate('not-a-date', 0, false);
+        assert(Boolean(dFallback && dFallback.dateStr), 'Fallback produces valid date object on invalid string input');
       });
 
       // ----------------------------------------------------
@@ -611,13 +1180,16 @@ Ananya: Chemistry, Physics`;
 
       const frame = document.getElementById('app-test-frame');
       if (frame) {
-        frame.addEventListener('load', runAllTests);
-        // Fallback timeout in case load already fired
+        frame.addEventListener('load', () => {
+          runAllTests();
+        });
+        // Long fallback in case load event already fired before listener was attached
         setTimeout(() => {
-          if (passCount === 0 && failCount === 0) {
+          const doc = frame.contentDocument || (frame.contentWindow && frame.contentWindow.document);
+          if (doc && doc.readyState === 'complete') {
             runAllTests();
           }
-        }, 300);
+        }, 2000);
       } else {
         runAllTests();
       }

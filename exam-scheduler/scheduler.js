@@ -30,12 +30,17 @@
     let year = 2026, month = 10, day = 26;
     if (startDateStr && /^\d{4}-\d{2}-\d{2}$/.test(startDateStr)) {
       const parts = startDateStr.split('-').map(Number);
-      year = parts[0];
-      month = parts[1];
-      day = parts[2];
+      if (!isNaN(parts[0]) && !isNaN(parts[1]) && !isNaN(parts[2])) {
+        year = parts[0];
+        month = parts[1];
+        day = parts[2];
+      }
     }
 
-    const cur = new Date(year, month - 1, day);
+    let cur = new Date(year, month - 1, day);
+    if (isNaN(cur.getTime())) {
+      cur = new Date(2026, 9, 26);
+    }
 
     // If initial date is a weekend and skipWeekends is active, advance to Monday
     if (skipWeekends) {
@@ -62,6 +67,15 @@
     const formatted = `${dayName}, ${d} ${MONTH_NAMES[cur.getMonth()]} ${y}`;
 
     return { dateStr, formatted, dayName };
+  }
+
+  function localMulberry32(a) {
+    return function () {
+      let t = a += 0x6D2B79F5;
+      t = Math.imul(t ^ t >>> 15, t | 1);
+      t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
   }
 
   /**
@@ -178,16 +192,19 @@
       }
       permute([...naturalOrder], 0, slotCount - 1);
     } else {
-      // For larger graphs, use multi-start 2-opt local search with greedy nearest-neighbor seeding
+      // For larger graphs, use multi-start 2-opt local search with seeded starts
+      // Seed 0: Greedy nearest-neighbor
+      // Seed 1: MST-preorder heuristic seed (Prim on weight matrix, ties by index)
+      // Seeds 2..19: Deterministic seeded Fisher-Yates shuffle (Mulberry32)
+      // Honest note: MST-preorder is a heuristic seed for a path through slots; 2-opt refines it.
       const runs = 20;
 
-      // Seed 1: Greedy nearest-neighbor (pick next slot that has minimal conflict with previous)
       for (let run = 0; run < runs; run++) {
         let order = [];
         const unassigned = new Set(naturalOrder);
 
         if (run === 0) {
-          // Deterministic starting seed
+          // Deterministic starting seed: greedy nearest-neighbor
           let cur = 0;
           order.push(cur);
           unassigned.delete(cur);
@@ -205,9 +222,18 @@
             unassigned.delete(nextSlot);
             cur = nextSlot;
           }
+        } else if (run === 1 && global.MSTModule && typeof global.MSTModule.prim === 'function' && typeof global.MSTModule.preorderFromTree === 'function') {
+          // Heuristic seed: Prim MST preorder walk
+          const primRes = global.MSTModule.prim(weightMatrix, 0);
+          order = global.MSTModule.preorderFromTree(slotCount, primRes.edges, 0);
         } else {
-          // Randomized start
-          order = Array.from(unassigned).sort(() => Math.random() - 0.5);
+          // Deterministic seeded Fisher-Yates shuffle using local mulberry32 PRNG
+          order = [...naturalOrder];
+          const rng = localMulberry32(1000 + run);
+          for (let i = order.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [order[i], order[j]] = [order[j], order[i]];
+          }
         }
 
         // 2-opt refinement
@@ -283,8 +309,10 @@
       // Clean list of available rooms for this slot
       const availableRooms = roomsList.map(r => ({ ...r, isBooked: false }));
 
-      // Sort subjects in this slot by student count descending
-      const sortedSubjects = [...entry.subjects].sort((a, b) => b.studentCount - a.studentCount);
+      // Sort subjects in this slot by student count descending using counting sort when available
+      const sortedSubjects = global.SortingModule && typeof global.SortingModule.countingSortBy === 'function'
+        ? global.SortingModule.countingSortBy(entry.subjects, s => s.studentCount, { descending: true }).sorted
+        : [...entry.subjects].sort((a, b) => b.studentCount - a.studentCount);
 
       for (const subj of sortedSubjects) {
         const needed = subj.studentCount;
@@ -318,10 +346,11 @@
           remaining = 0;
         } else {
           // 2. No single room fits: split across largest unbooked rooms
-          // Sort remaining unbooked rooms by capacity descending
-          const unbooked = availableRooms
-            .filter(r => !r.isBooked)
-            .sort((a, b) => b.capacity - a.capacity);
+          // Sort remaining unbooked rooms by capacity descending using counting sort when available
+          const unbookedList = availableRooms.filter(r => !r.isBooked);
+          const unbooked = global.SortingModule && typeof global.SortingModule.countingSortBy === 'function'
+            ? global.SortingModule.countingSortBy(unbookedList, r => r.capacity, { descending: true }).sorted
+            : unbookedList.sort((a, b) => b.capacity - a.capacity);
 
           for (const room of unbooked) {
             if (remaining <= 0) break;
@@ -605,6 +634,202 @@
     };
   }
 
+  /**
+   * 0/1 Knapsack optimization using bottom-up dynamic programming.
+   * Maximizes total value within capacity, with deterministic backtracking.
+   * 
+   * @param {Array<{name: string, weight: number, value: number}>} items
+   * @param {number} capacity
+   * @returns {{ chosen: string[], totalWeight: number, totalValue: number, skipped: boolean, reason?: string }}
+   */
+  function knapsackSelect(items, capacity) {
+    if (!items || items.length === 0 || capacity <= 0) {
+      return { chosen: [], totalWeight: 0, totalValue: 0, skipped: false };
+    }
+
+    const n = items.length;
+    const W = Math.floor(capacity);
+    // Guard against memory explosion (> 4,000,000 cells)
+    if ((n + 1) * (W + 1) > 4000000) {
+      return { chosen: [], totalWeight: 0, totalValue: 0, skipped: true, reason: 'too-large' };
+    }
+
+    const cols = W + 1;
+    const dp = new Int32Array((n + 1) * cols);
+
+    for (let i = 1; i <= n; i++) {
+      const item = items[i - 1];
+      const wt = Math.floor(item.weight);
+      const val = Math.floor(item.value);
+      const rowPrev = (i - 1) * cols;
+      const rowCurr = i * cols;
+
+      for (let w = 0; w <= W; w++) {
+        if (wt <= w) {
+          const withItem = dp[rowPrev + (w - wt)] + val;
+          const withoutItem = dp[rowPrev + w];
+          dp[rowCurr + w] = withItem > withoutItem ? withItem : withoutItem;
+        } else {
+          dp[rowCurr + w] = dp[rowPrev + w];
+        }
+      }
+    }
+
+    // Deterministic backtracking: when dp[i][w] === dp[i-1][w], item i was NOT taken
+    const chosen = [];
+    let currW = W;
+    let totalWeight = 0;
+    let totalValue = 0;
+
+    for (let i = n; i >= 1; i--) {
+      const rowPrev = (i - 1) * cols;
+      const rowCurr = i * cols;
+      if (dp[rowCurr + currW] !== dp[rowPrev + currW]) {
+        const item = items[i - 1];
+        chosen.push(item.name);
+        totalWeight += item.weight;
+        totalValue += item.value;
+        currW -= Math.floor(item.weight);
+      }
+    }
+
+    chosen.reverse();
+    return {
+      chosen,
+      totalWeight,
+      totalValue,
+      skipped: false
+    };
+  }
+
+  /**
+   * Plans room overflow moves for slots with insufficient capacity.
+   * Uses 0/1 Knapsack to select the best subset of subjects to keep,
+   * followed by an iterative reality check with allocateRooms.
+   * 
+   * @param {Object} timetable
+   * @param {Array<{name: string, capacity: number}>} rooms
+   * @returns {Array<{slotIndex: number, slotNumber: number, keep: string[], overflow: string[], unfixable: string[]}>}
+   */
+  function planRoomOverflow(timetable, rooms) {
+    if (!timetable || !timetable.entries || !rooms || rooms.length === 0) {
+      return [];
+    }
+
+    const totalCapacity = rooms.reduce((sum, r) => sum + (r.capacity || 0), 0);
+    const plan = [];
+
+    for (const entry of timetable.entries) {
+      const totalNeeded = entry.subjects.reduce((sum, s) => sum + s.studentCount, 0);
+
+      // Fast check: if total students fit in total capacity, check real allocation
+      if (totalNeeded <= totalCapacity) {
+        const testAlloc = allocateRooms([entry], rooms);
+        if (testAlloc.warnings.length === 0) {
+          continue; // Slot fits perfectly without warnings
+        }
+      }
+
+      // Slot has shortfall: separate unfixable vs candidates
+      const unfixable = [];
+      const candidates = [];
+
+      for (const subj of entry.subjects) {
+        if (subj.studentCount > totalCapacity) {
+          unfixable.push(subj.name);
+        } else {
+          candidates.push(subj);
+        }
+      }
+
+      // Run 0/1 Knapsack on candidates
+      const items = candidates.map(s => ({
+        name: s.name,
+        weight: s.studentCount,
+        value: s.studentCount
+      }));
+
+      const ksRes = knapsackSelect(items, totalCapacity);
+      const keepSet = new Set(ksRes.chosen);
+      const overflowSet = new Set(candidates.filter(s => !keepSet.has(s.name)).map(s => s.name));
+
+      // Reality check: allocateRooms gives whole rooms to subjects
+      // Iteratively remove the subject named in the first warning until no warnings remain
+      while (keepSet.size > 0) {
+        const keptSubjects = entry.subjects.filter(s => keepSet.has(s.name));
+        const testEntry = {
+          slotIndex: entry.slotIndex,
+          slotNumber: entry.slotNumber,
+          date: entry.date,
+          time: entry.time,
+          subjects: keptSubjects
+        };
+        const testAlloc = allocateRooms([testEntry], rooms);
+        if (testAlloc.warnings.length === 0) {
+          break;
+        }
+        const warningSubj = testAlloc.warnings[0].subject;
+        if (keepSet.has(warningSubj)) {
+          keepSet.delete(warningSubj);
+          overflowSet.add(warningSubj);
+        } else {
+          const firstKept = Array.from(keepSet)[0];
+          keepSet.delete(firstKept);
+          overflowSet.add(firstKept);
+        }
+      }
+
+      const keep = entry.subjects.filter(s => keepSet.has(s.name)).map(s => s.name);
+      const overflow = Array.from(overflowSet);
+
+      if (overflow.length > 0 || unfixable.length > 0) {
+        plan.push({
+          slotIndex: entry.slotIndex,
+          slotNumber: entry.slotNumber,
+          keep,
+          overflow,
+          unfixable
+        });
+      }
+    }
+
+    return plan;
+  }
+
+  /**
+   * Pure function: assigns overflow subjects to new slots.
+   * Does NOT mutate inputs.
+   * 
+   * @param {Object} graph
+   * @param {Object<string, number>} colorOf
+   * @param {number[]} slotOrder
+   * @param {Array<{slotIndex: number, slotNumber: number, keep: string[], overflow: string[], unfixable: string[]}>} plan
+   * @returns {{ colorOf: Object<string, number>, slotOrder: number[], slotCount: number }}
+   */
+  function applyRoomOverflowPlan(graph, colorOf, slotOrder, plan) {
+    const newColorOf = Object.assign({}, colorOf);
+    let currentSlotCount = graph.subjects.length > 0 ? Math.max(...Object.values(colorOf)) + 1 : 0;
+    const newSlotOrder = slotOrder ? [...slotOrder] : Array.from({ length: currentSlotCount }, (_, i) => i);
+
+    if (Array.isArray(plan)) {
+      for (const item of plan) {
+        if (item.overflow && item.overflow.length > 0) {
+          const newSlot = currentSlotCount++;
+          for (const subj of item.overflow) {
+            newColorOf[subj] = newSlot;
+          }
+          newSlotOrder.push(newSlot);
+        }
+      }
+    }
+
+    return {
+      colorOf: newColorOf,
+      slotOrder: newSlotOrder,
+      slotCount: currentSlotCount
+    };
+  }
+
   const SchedulerModule = {
     computeExamDate,
     spreadOutExams,
@@ -612,7 +837,10 @@
     generateTimetable,
     countStudentBackToBack,
     verifySchedule,
-    selectBestAlgorithm
+    selectBestAlgorithm,
+    knapsackSelect,
+    planRoomOverflow,
+    applyRoomOverflowPlan
   };
 
   global.SchedulerModule = SchedulerModule;
